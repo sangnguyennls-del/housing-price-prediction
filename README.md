@@ -194,7 +194,7 @@ hai loại giá này là một nguồn sai số cố hữu mà không mô hình 
 |---|---|---|---|
 | 1 | Dự đoán giá | XGBoost / LightGBM / CatBoost + Optuna + Stacking | ✅ [`ml/train_price.py`](ml/train_price.py) |
 | 2 | Heatmap giá theo tỉnh/quận/phường | Spark aggregation + Leaflet choropleth | ✅ [`spark/batch_silver_to_gold.py`](spark/batch_silver_to_gold.py) · [`dashboard/src/MapView.jsx`](dashboard/src/MapView.jsx) |
-| 3 | Dự báo xu hướng | Prophet vs LSTM vs Naive | ⚠️ [`ml/train_forecast.py`](ml/train_forecast.py) — code xong, chuỗi thời gian còn ngắn |
+| 3 | Dự báo xu hướng | Prophet vs LSTM vs **Naive** | ✅ [`ml/train_forecast.py`](ml/train_forecast.py) — 9 chuỗi × 66 điểm tháng, naive thắng 8/9 |
 | 4 | Phân cụm khu vực | KMeans + PCA, chọn k bằng Silhouette | ✅ [`ml/train_cluster.py`](ml/train_cluster.py) |
 | 5 | Phát hiện tin bất thường | Phần dư mô hình giá + Isolation Forest + LOF | ✅ [`ml/train_anomaly.py`](ml/train_anomaly.py) — 916 tin |
 
@@ -245,6 +245,37 @@ cho cả quận, trong khi biên độ giá p90/p10 *trong cùng một quận* t
 
 ```bash
 docker compose exec ml python scripts/learning_curve.py
+```
+
+### Bài toán 3 — naive thắng Prophet và LSTM ở 8/9 quận
+
+Chuỗi giá theo ngày 9 quận TP.HCM, 2017-01 → 2022-06 (`HousePricingHCM_v2.csv`),
+gộp về tháng bằng trung vị → 66 điểm/quận. Backtest cuốn chiếu, horizon 3 tháng,
+24 fold mỗi địa bàn:
+
+| Mô hình | MAPE trung bình | Độ lệch chuẩn | Thắng ở |
+|---|---|---|---|
+| **naive** (lặp giá trị cuối) | **5,08%** | **±1,96** | **8/9 quận** |
+| LSTM | 8,67% | ±5,04 | 1/9 quận |
+| Prophet | 11,54% | ±4,28 | 0/9 quận |
+
+Naive vừa chính xác nhất vừa ổn định nhất. Kết luận **không phải** "chuỗi quá
+ngắn" — 5,5 năm là thừa. Giá bất động sản rất gần **bước ngẫu nhiên có trôi**,
+mà với bước ngẫu nhiên thì dự báo tối ưu chính là giá trị cuối cùng. Prophet và
+LSTM cùng mắc một lỗi: ngoại suy đà tăng gần nhất đi quá xa.
+
+Nếu chỉ báo cáo "Prophet đạt MAPE 11,54%" thì con số đó nghe hợp lý và không ai
+chất vấn — trong khi một mô hình *không học gì cả* đạt 5,08%. Đó là lý do mốc
+đối chứng naive nằm trong thiết kế ngay từ đầu.
+
+**Một cái bẫy định dạng**: cột `Date` ghi kiểu Mỹ `M/D/YYYY` dù là dữ liệu Việt
+Nam. Parse theo phản xạ `dayfirst=True` chỉ được 39,7% số dòng, và 40% còn lại
+bị hiểu sai ngày (`01/03/2017` → 3 tháng 1 thay vì 1 tháng 3). Không lỗi, không
+cảnh báo. Script nay thử cả hai quy ước và chọn cái parse được nhiều hơn.
+
+```bash
+docker compose exec ml python scripts/build_price_history.py
+docker compose exec ml python ml/train_forecast.py --all --horizon 3
 ```
 
 ### Năm kết quả phản trực giác, đều rút ra từ số đo

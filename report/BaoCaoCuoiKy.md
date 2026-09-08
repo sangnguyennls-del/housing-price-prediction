@@ -170,7 +170,7 @@ Nhóm nêu các giới hạn ngay ở chương đầu, vì chúng ảnh hưởng
 
 **(3) Hệ quy chiếu hành chính.** Đồ án chọn hệ **trước ngày 01/07/2025** (63 tỉnh/thành, có cấp quận/huyện) làm hệ quy chiếu chính, vì phần lớn dữ liệu được ghi theo hệ này. Dữ liệu ghi theo hệ mới được quy đổi ngược lại qua một bảng cầu nối. Chi tiết ở mục 3.5; đây là vấn đề kỹ thuật lớn nhất của đồ án.
 
-**(4) Dự báo xu hướng bị giới hạn bởi dữ liệu.** Dataset tin rao chính **không có cột thời gian**. Nhóm chủ động **không** sinh mốc thời gian giả để bài toán 3 "chạy được"; chi tiết và hệ quả ở mục 4.5.
+**(4) Dự báo xu hướng chỉ phủ 9 quận TP.HCM.** Dataset tin rao chính **không có cột thời gian**, nên bài toán 3 phải dùng một nguồn riêng: chuỗi giá theo ngày của Quận 1–9 TP.HCM, 2017–2022. Nhóm chủ động **không** sinh mốc thời gian giả cho dữ liệu tin rao để mở rộng phạm vi. Kết quả và phạm vi ở mục 4.5.
 
 **(5) Đánh giá phát hiện bất thường là bán định lượng.** Không có nhãn "tin ảo" thật. Nhóm đánh giá bằng nhãn sinh trên dữ liệu giả lập cộng với kiểm tra thủ công trên dữ liệu thật; xem mục 4.7.
 
@@ -805,8 +805,8 @@ Nhóm từ chối cách này. Script dựng chuỗi chỉ nhận ba nguồn có 
 
 | Nguồn | Mô tả | Trạng thái |
 |---|---|---|
-| `crawler_accumulated` | `posted_at` — ngày đăng tin do site công bố | Đang tích lũy, 4 điểm |
-| `kaggle_hcm` | Bất kỳ CSV nào trong `data/raw` **thực sự** có cột ngày | Chưa có file nào đạt |
+| `kaggle_hcm` | `HousePricingHCM_v2.csv` — giá theo ngày, 9 quận TP.HCM | ✅ **17.964 điểm**, 2017-01 → 2022-06 |
+| `crawler_accumulated` | `posted_at` — ngày đăng tin do site công bố | Đang tích lũy, 6 điểm |
 | `bds_index` | Chỉ số giá công bố công khai, nhập tay có trích dẫn | Chưa nhập |
 
 Nếu không nguồn nào khả dụng, script **dừng và báo rõ thiếu gì**, chứ không tự chế dữ liệu.
@@ -839,27 +839,64 @@ Với chuỗi vài chục điểm, một lần chia train/test cho ra con số p
 
 Cửa sổ **mở rộng** (expanding) chứ không trượt: dữ liệu bất động sản ít, vứt bỏ phần đầu chuỗi để giữ cửa sổ cố định là lãng phí thông tin hiếm.
 
-### 4.5.4. Trạng thái hiện tại
+### 4.5.4. Dữ liệu thực nghiệm
 
-Toàn bộ khung mô hình và backtest đã cài đặt và kiểm thử (kiểm tra tự động xác nhận: trên chuỗi có xu hướng tăng rõ, Prophet phải thắng naive — nếu không thì hoặc backtest đang rò rỉ tương lai, hoặc mô hình không học được gì).
+Nguồn chính là dataset Kaggle `trnduythanhkhttt/housepricinghcm`, file `HousePricingHCM_v2.csv`:
 
-Trường `posted_at` đã được bổ sung xuyên suốt pipeline (crawler → lược đồ Kafka → Silver → PostgreSQL) và bóc được trên dữ liệu thật. Đo tại thời điểm viết báo cáo:
-
-| Chỉ số | Giá trị đo được |
+| Chỉ số | Giá trị |
 |---|---|
-| Tin có `posted_at` trong Silver | 64 / 30.524 |
-| Phạm vi thời gian | 16/07/2026 – 05/09/2026 (52 ngày) |
-| Số ngày phân biệt | 18 |
-| Chuỗi tuần sau khi lọc ≥5 tin/kỳ | **6 điểm, 3 địa bàn** |
-| Chuỗi dài nhất (toàn quốc) | **4 điểm** — cần ≥ 12 |
+| Số điểm gốc | 1.996 điểm **theo ngày** × 9 quận = 17.964 |
+| Phạm vi | 01/01/2017 – 20/06/2022 (5 năm 5 tháng) |
+| Địa bàn | Quận 1–9, TP. Hồ Chí Minh |
+| Giá trị khuyết | 0 |
+| Sau khi gộp theo tháng | 66 điểm/quận |
 
-Ba nguyên nhân, đều đo được chứ không phải phỏng đoán:
+**Một cái bẫy định dạng suýt phá hỏng toàn bộ.** Cột `Date` ghi theo quy ước **Mỹ (M/D/YYYY)** dù đây là dữ liệu Việt Nam. Parse theo phản xạ tự nhiên `dayfirst=True` cho kết quả:
 
-1. Trang danh sách của site **chỉ hiện ngày đăng trên khoảng 35% số tin**.
-2. Trang danh sách chỉ phủ vài tuần gần nhất, không phải toàn bộ kho lưu trữ.
-3. Site giới hạn tốc độ rất chặt: một phiên 99 trang ở nhịp 20 giây bị HTTP 429 chặn sau khoảng 16 trang. Tích lũy đủ chuỗi đòi hỏi nhiều phiên nhỏ chạy theo lịch trong vài tuần, không phải một phiên dài.
+| Quy ước | Tỷ lệ parse thành công | Số ngày phân biệt |
+|---|---|---|
+| `dayfirst=True` (D/M/Y) | 39,7% | 792 |
+| **`dayfirst=False`** (M/D/Y) | **100%** | **1.996** |
 
-**Kết luận trung thực cho báo cáo:** bài toán 3 đã hoàn tất về phương pháp, cài đặt và đường dẫn dữ liệu — script dựng chuỗi chạy đúng, nhận ra chuỗi chưa đủ dài và **từ chối huấn luyện** thay vì cho ra một con số vô nghĩa. Nhưng **chưa có kết quả định lượng đáng tin cậy** do ràng buộc dữ liệu. Nhóm chọn báo cáo đúng như vậy thay vì đưa ra một MAPE tính trên dữ liệu bịa. Hạ tầng đã sẵn sàng; thứ còn thiếu duy nhất là thời gian tích lũy.
+Nghĩa là mất 60% số dòng, và 40% còn lại **bị hiểu sai ngày** — `01/03/2017` thành 3 tháng 1 thay vì 1 tháng 3. Không một thông báo lỗi nào. Hàm `_parse_dates()` nay thử cả hai quy ước và chọn quy ước parse được nhiều dòng hơn.
+
+**Gộp ngày thành tháng bằng trung vị.** Câu hỏi của đồ án là *xu hướng thị trường*, mà ở tần suất ngày phần lớn biến động là nhiễu đo — giá bất động sản không đổi theo ngày. Gộp về tháng vừa lọc nhiễu, vừa đưa 1.996 điểm về 66 điểm đủ để Prophet ước lượng mùa vụ năm trên 5,5 chu kỳ quan sát.
+
+**Quận 2 và Quận 9 được giữ tách bạch**, không gộp về mã 769 (TP. Thủ Đức) như quy tắc chung ở mục 3.5. Lý do: chuỗi bắt đầu từ 2017, khi hai quận còn tồn tại riêng với mặt bằng giá rất khác nhau. Gộp lại sẽ tạo ra một phép đo "Thủ Đức 2017" chưa từng tồn tại. Mã dùng là `769_Q2` và `769_Q9` — ghi rõ quan hệ với đơn vị hiện hành mà vẫn phân biệt được.
+
+### 4.5.5. Kết quả — naive thắng ở 8/9 địa bàn
+
+Cấu hình backtest: horizon 3 tháng, cửa sổ mở rộng, huấn luyện tối thiểu 19 tháng, 24 fold cho mỗi địa bàn. Tổng cộng 9 × 24 × 3 = 648 lần huấn luyện lại.
+
+| Quận | naive | LSTM | Prophet | Tốt nhất |
+|---|---|---|---|---|
+| Quận 7 | **2,71%** | 3,48% | 8,40% | naive |
+| Quận 8 | **3,25%** | 3,36% | 4,13% | naive |
+| Quận 6 | **4,04%** | 10,76% | 13,64% | naive |
+| Quận 9 | **4,56%** | 5,03% | 9,77% | naive |
+| Quận 2 | 4,82% | **4,30%** | 12,74% | lstm |
+| Quận 5 | **4,91%** | 9,26% | 7,63% | naive |
+| Quận 3 | **5,05%** | 10,32% | 14,77% | naive |
+| Quận 4 | **7,62%** | 17,73% | 16,04% | naive |
+| Quận 1 | **8,80%** | 13,83% | 16,74% | naive |
+| **Trung bình** | **5,08% (±1,96)** | 8,67% (±5,04) | 11,54% (±4,28) | **naive 8/9** |
+
+Hai điều đáng chú ý ngoài thứ hạng:
+
+1. **Naive không chỉ chính xác nhất mà còn ổn định nhất.** Độ lệch chuẩn giữa các địa bàn là 1,96 điểm, so với 5,04 của LSTM và 4,28 của Prophet. Hai mô hình phức tạp không chỉ sai nhiều hơn mà còn sai *thất thường* hơn — tệ hơn nữa với một công cụ dùng thật.
+2. **Địa bàn duy nhất LSTM thắng chỉ hơn 0,52 điểm** (Quận 2: 4,30% so với 4,82%), nằm trong nhiễu giữa các fold. Không có bằng chứng nào cho thấy LSTM thực sự tốt hơn ở đó.
+
+### 4.5.6. Vì sao naive thắng — và vì sao đây là kết quả có giá trị
+
+Kết luận **không phải** "chuỗi quá ngắn". Chuỗi dài 5,5 năm với 66 điểm tháng — thừa cho cả Prophet lẫn một LSTM nhỏ. Đây là kết luận về **bản chất của chuỗi**:
+
+Giá bất động sản rất gần một **bước ngẫu nhiên có trôi** (random walk with drift). Với bước ngẫu nhiên, dự báo tối ưu theo nghĩa sai số bình phương **chính là giá trị quan sát cuối cùng** — đúng cái naive làm. Mọi cấu trúc mà Prophet và LSTM cố học (mùa vụ, điểm gãy xu hướng, phụ thuộc phi tuyến trong cửa sổ) hoặc không tồn tại, hoặc không ổn định đủ để ngoại suy.
+
+Cụ thể hơn, cả hai mắc cùng một lỗi: **ngoại suy đà tăng gần nhất đi quá xa**. Giai đoạn 2017–2022 giá TP.HCM tăng rất mạnh (Quận 1: 73,5 → 284,1 triệu/m², tức +286%) nhưng theo từng đợt chứ không đều. Prophet khớp một xu hướng rồi kéo dài nó ra 3 tháng; khi thị trường chững lại, sai số dồn hết vào đó. Naive không dự đoán gì nên cũng không có gì để sai.
+
+**Vì sao kết quả này đáng giá hơn một con số MAPE đẹp:** nếu nhóm chỉ báo cáo "Prophet đạt MAPE 11,54%" thì con số đó nghe hợp lý và không ai chất vấn — trong khi thực tế một mô hình *không học gì cả* đạt 5,08%, tốt hơn hai lần. Chính vì vậy mốc đối chứng naive được đưa vào thiết kế **ngay từ đầu** (mục 4.5.2), chứ không phải thêm vào sau khi thấy kết quả xấu.
+
+**Điều nhóm chưa thử, và nêu ra để trung thực về phạm vi:** chưa mô hình hóa trên thang log để xử lý tăng trưởng nhân tính, chưa đưa biến ngoại sinh (lãi suất, chỉ số vật liệu xây dựng), và chưa thử ARIMA/SARIMA. Cả ba đều có thể thu hẹp khoảng cách. Nhưng nhóm chủ động **không** tinh chỉnh tiếp cho tới khi Prophet thắng — làm vậy trên cùng tập dữ liệu đã dùng để đánh giá thì con số cuối cùng không còn nghĩa gì.
 
 ## 4.6. Bài toán 5 — Phát hiện tin rao bất thường
 
@@ -979,6 +1016,7 @@ Bài học rút ra không phải "mô hình tệ hơn ta tưởng" mà là: **m�
 | 6 | `train_price.py --stage all` | MLflow có đủ 4 giai đoạn, 10 lần chạy | ✅ MAPE **19,43%** |
 | 7 | `train_cluster.py` | Phân cụm có Silhouette | ✅ k=3, **0,4758** |
 | 8 | `train_anomaly.py` | Danh sách tin bất thường | ✅ **916** tin |
+| 8b | `build_price_history.py` + `train_forecast.py --all` | Chuỗi thời gian + backtest | ✅ 9 chuỗi × 66 điểm tháng, naive 8/9 |
 | 9 | `streaming_hot_path.py --once` | Redis có key `hot:*` | ✅ 215 quận, 2.176 cảnh báo |
 | 10 | `curl POST :8000/predict` | Trả giá dự đoán | ✅ 12 ms |
 | 11 | `curl :8090/api/dashboard/overview` | Gộp PostgreSQL + Redis | ✅ |
@@ -1078,6 +1116,7 @@ Danh mục ảnh cần chèn vào báo cáo bản Word:
 | 5.12 | Phân cụm trên không gian PCA | `report/figures/cluster_scatter.png` |
 | 5.13 | Phân bố điểm bất thường | `report/figures/anomaly_detection.png` |
 | 5.14 | Đường cong học | `report/figures/learning_curve.png` |
+| 5.15 | Chuỗi giá và dự báo (Quận 1) | `report/figures/forecast.png` |
 
 <!-- PAGEBREAK -->
 
@@ -1095,7 +1134,7 @@ Danh mục ảnh cần chèn vào báo cáo bản Word:
 |---|---|---|
 | 1 | Dự đoán giá | MAPE **19,43%**, R²(log) 0,838; 23,61% trên quận chưa từng thấy |
 | 2 | Heatmap giá | 400 đơn vị hành chính, choropleth 3 cấp, ghép mã 99,7% |
-| 3 | Dự báo xu hướng | Khung mô hình xong; chuỗi mới 4 điểm, chưa đủ để kết luận |
+| 3 | Dự báo xu hướng | 9 chuỗi × 66 điểm tháng (2017–2022); **naive thắng 8/9** địa bàn, MAPE **5,08%** |
 | 4 | Phân cụm khu vực | k=3, Silhouette **0,4758**, PCA giữ 84,0% |
 | 5 | Tin bất thường | **916** tin; PR-AUC **0,9924** trên nhãn kiểm chứng |
 
@@ -1109,7 +1148,7 @@ Danh mục ảnh cần chèn vào báo cáo bản Word:
 
 **(2) Giá rao khác giá giao dịch.** Sai số cố hữu, không loại bỏ được trong phạm vi dữ liệu hiện có.
 
-**(3) Bài toán 3 chưa có kết quả định lượng.** Chuỗi dài nhất mới 4 điểm, cần tối thiểu 12.
+**(3) Dự báo xu hướng chỉ phủ 9 quận TP.HCM và dừng ở 06/2022.** Chuỗi tự tích lũy từ `posted_at` mới 6 điểm nên chưa thay thế được. Ngoài ra chưa thử thang log, biến ngoại sinh và ARIMA — ba hướng có thể thu hẹp khoảng cách với naive (mục 4.5.6).
 
 **(4) Đánh giá phát hiện bất thường là bán định lượng.** PR-AUC 0,9924 đo trên nhãn của dữ liệu giả lập; trên dữ liệu thật chỉ có kiểm tra thủ công.
 
@@ -1123,7 +1162,8 @@ Danh mục ảnh cần chèn vào báo cáo bản Word:
 
 **Ngắn hạn — bổ khuyết dữ liệu:**
 
-- Chạy crawler theo lịch trong vài tuần để tích lũy đủ chuỗi `posted_at` cho bài toán 3. Hạ tầng đã sẵn sàng, chỉ thiếu thời gian tích lũy.
+- Chạy crawler theo lịch trong vài tuần để chuỗi `posted_at` đủ dài, nhằm mở rộng dự báo ra ngoài 9 quận TP.HCM và cập nhật tới hiện tại. Hạ tầng đã sẵn sàng, chỉ thiếu thời gian tích lũy.
+- Thử mô hình hóa trên thang log và thêm biến ngoại sinh cho bài toán 3 — hiện naive vẫn thắng cả Prophet lẫn LSTM (mục 4.5.6).
 - Bổ sung nguồn dữ liệu có phân khúc cao cấp để nới trần giá của mô hình.
 - Gán nhãn thủ công một mẫu 200–500 tin để đánh giá phát hiện bất thường trên dữ liệu thật.
 

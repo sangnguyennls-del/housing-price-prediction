@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -113,6 +114,26 @@ _DATE_KEYS = ("date", "thang", "month", "time", "period", "ngay", "quarter")
 _PRICE_KEYS = ("price", "gia", "value", "index")
 _AREA_KEYS = ("district", "quan", "area_name", "region", "location")
 
+# Cột dạng "District 1", "Quan 7", "Q.3" trong bảng RỘNG (mỗi quận một cột).
+_WIDE_COL = re.compile(r"^\s*(?:district|quan|quận|q)\s*[._-]?\s*(\d{1,2})\s*$", re.I)
+
+# Mã hành chính TP.HCM. Quận 2 và Quận 9 đã giải thể ngày 01/01/2021 để lập
+# thành phố Thủ Đức (mã 769) — nhưng chuỗi giá này chạy từ 2017, khi hai quận
+# đó còn tồn tại và có mặt bằng giá rất khác nhau. Gộp chúng về cùng mã 769 sẽ
+# tạo ra hai chuỗi trùng mã, và tệ hơn là bịa ra một phép đo "Thủ Đức 2017"
+# chưa từng tồn tại. Giữ tách bạch, mã ghi rõ quan hệ với đơn vị hiện hành.
+HCM_DISTRICTS = {
+    1: ("760", "Quận 1"),
+    2: ("769_Q2", "Quận 2 (nay thuộc TP Thủ Đức)"),
+    3: ("770", "Quận 3"),
+    4: ("773", "Quận 4"),
+    5: ("774", "Quận 5"),
+    6: ("775", "Quận 6"),
+    7: ("778", "Quận 7"),
+    8: ("776", "Quận 8"),
+    9: ("769_Q9", "Quận 9 (nay thuộc TP Thủ Đức)"),
+}
+
 
 def _pick(cols: dict[str, str], keys: tuple[str, ...]) -> str | None:
     for k in keys:
@@ -122,74 +143,114 @@ def _pick(cols: dict[str, str], keys: tuple[str, ...]) -> str | None:
     return None
 
 
-def _looks_like_series(path: Path) -> tuple[str, str, str | None] | None:
-    """Mở file ra xem: đây CÓ PHẢI chuỗi thời gian không?
+def _parse_dates(raw: pd.Series) -> pd.Series:
+    """Thử CẢ HAI quy ước ngày, chọn quy ước parse được nhiều dòng hơn.
 
-    NHẬN DIỆN THEO NỘI DUNG, KHÔNG THEO TÊN — và đây là bài học phải trả giá
-    bằng một vòng làm việc thừa. Đề cương của đồ án ghi dataset Kaggle
+    Đây không phải cẩn thận thừa. Dataset HousePricingHCM ghi ngày theo kiểu
+    MỸ (M/D/YYYY) dù là dữ liệu Việt Nam. Mặc định dayfirst=True — phản xạ tự
+    nhiên với dữ liệu Việt — chỉ parse được 39,7% số dòng, VÀ hiểu sai 40% còn
+    lại: "01/03/2017" thành 3 tháng 1 thay vì 1 tháng 3. Mất 60% dữ liệu và
+    xáo trộn phần còn lại, không một thông báo lỗi nào.
+    """
+    a = pd.to_datetime(raw, errors="coerce", dayfirst=False)
+    b = pd.to_datetime(raw, errors="coerce", dayfirst=True)
+    return a if a.notna().sum() >= b.notna().sum() else b
+
+
+def _read_series(path: Path) -> pd.DataFrame | None:
+    """Đọc một CSV → khung chuẩn (area_code, area_name, ds, price_m2) hoặc None.
+
+    NHẬN DIỆN THEO NỘI DUNG, KHÔNG THEO TÊN FILE — bài học phải trả giá bằng
+    một vòng làm việc thừa. Đề cương đồ án chỉ đích danh dataset Kaggle
     "hoandan/apartment-prices-in-the-city-ho-chi-minh-city" là chuỗi thời gian
-    có cột Date, suy ra từ CÁI TÊN chứ không mở ra xem. Tải về mới biết bên
-    trong là "chung cu chotot.csv": 2.015 tin rao, 5 cột, không có ngày tháng
-    nào. Bản dò theo tên file trước đây cũng hỏng nốt vì file không chứa chữ
-    "apartment".
+    "có cột Date", suy từ CÁI TÊN chứ không mở ra xem. Tải về mới biết bên
+    trong là "chung cu chotot.csv": 2.015 tin rao, không có ngày tháng nào.
 
-    Đọc 50 dòng đầu rồi thử parse thành ngày thì đúng/sai do DỮ LIỆU quyết
-    định, không do cách đặt tên.
+    Xử lý được cả hai dạng bảng:
+      RỘNG  Date | District 1 | District 2 | ...   (mỗi quận một cột)
+      DÀI   Date | district   | price               (mỗi dòng một quận)
     """
     try:
-        head = pd.read_csv(path, nrows=50)
+        df = pd.read_csv(path)
     except Exception:                                       # noqa: BLE001
         return None
-    cols = {c.lower().strip(): c for c in head.columns}
-    c_date, c_price = _pick(cols, _DATE_KEYS), _pick(cols, _PRICE_KEYS)
-    if not c_date or not c_price:
+
+    cols = {c.lower().strip(): c for c in df.columns}
+    c_date = _pick(cols, _DATE_KEYS)
+    if not c_date:
         return None
+
+    ds = _parse_dates(df[c_date])
     # Tên cột nghe giống ngày vẫn chưa đủ — phải parse được thật. Cột
     # "Unnamed: 0" chứa chữ "nam" và từng bị bắt nhầm đúng theo kiểu này.
-    parsed = pd.to_datetime(head[c_date], errors="coerce")
-    if parsed.notna().mean() < 0.8 or parsed.nunique() < 3:
+    if ds.notna().mean() < 0.8 or ds.nunique() < 3:
         return None
-    return c_date, c_price, _pick(cols, _AREA_KEYS)
+
+    # ── Dạng RỘNG ─────────────────────────────────────────────────
+    wide = {c: int(m.group(1)) for c in df.columns
+            if (m := _WIDE_COL.match(str(c)))}
+    if len(wide) >= 2:
+        out = []
+        for col, num in wide.items():
+            code, name = HCM_DISTRICTS.get(num, (f"HCM_D{num}", f"Quận {num}"))
+            out.append(pd.DataFrame({
+                "area_code": code, "area_name": name, "ds": ds,
+                "price_m2": pd.to_numeric(df[col], errors="coerce")}))
+        return pd.concat(out, ignore_index=True).dropna()
+
+    # ── Dạng DÀI ──────────────────────────────────────────────────
+    c_price = _pick(cols, _PRICE_KEYS)
+    if not c_price:
+        return None
+    c_area = _pick(cols, _AREA_KEYS)
+    out = pd.DataFrame({
+        "ds": ds,
+        "price_m2": pd.to_numeric(
+            df[c_price].astype(str).str.replace(r"[^\d.,-]", "", regex=True)
+                      .str.replace(",", ".", regex=False), errors="coerce"),
+        "area_name": (df[c_area].astype(str) if c_area else "TP. Hồ Chí Minh"),
+    }).dropna()
+    if out.empty:
+        return None
+    out["area_code"] = "HCM_" + out["area_name"].str.replace(r"\W+", "", regex=True)
+    return out[["area_code", "area_name", "ds", "price_m2"]]
 
 
 def from_kaggle_hcm() -> pd.DataFrame:
-    """Nạp MỌI CSV trong data/raw thực sự có chuỗi thời gian.
+    """Nạp mọi CSV trong data/raw thực sự có chuỗi thời gian.
 
-    Không đòi tên file cụ thể: người dùng tải dataset nào về cũng được, hệ
-    thống tự nhận ra file nào dùng được và nói rõ file nào không.
+    Duyệt file LỚN TRƯỚC rồi khử trùng theo (area_code, ds): dataset cộng đồng
+    hay có nhiều phiên bản của cùng một chuỗi (HousePricingHCM.csv và
+    HousePricingHCM_v2.csv), và bản đầy đủ hơn nên thắng.
     """
     frames, skipped = [], []
-    for path in sorted(RAW.glob("*.csv")):
+    paths = sorted(RAW.glob("*.csv"),
+                   key=lambda q: q.stat().st_size, reverse=True)
+    for path in paths:
         if path.stem.lower().startswith("sample"):
             continue
-        hit = _looks_like_series(path)
-        if hit is None:
+        out = _read_series(path)
+        if out is None or out.empty:
             skipped.append(path.name)
             continue
-        c_date, c_price, c_area = hit
-
-        df = pd.read_csv(path)
-        out = pd.DataFrame({
-            "ds": pd.to_datetime(df[c_date], errors="coerce"),
-            "price_m2": pd.to_numeric(
-                df[c_price].astype(str).str.replace(r"[^\d.,-]", "", regex=True)
-                          .str.replace(",", ".", regex=False), errors="coerce"),
-            "area_name": (df[c_area].astype(str) if c_area else "TP. Hồ Chí Minh"),
-        }).dropna()
-        if out.empty:
-            skipped.append(path.name)
-            continue
-
-        out["area_code"] = "HCM_" + out["area_name"].str.replace(r"\W+", "", regex=True)
-        out["ds"] = out["ds"].dt.date
+        out["ds"] = pd.to_datetime(out["ds"]).dt.date
         out["source"] = "kaggle_hcm"
         print(f"  ✓ {path.name}: {len(out):,} điểm · "
-              f"{out['area_code'].nunique()} địa bàn · {out['ds'].min()} → {out['ds'].max()}")
+              f"{out['area_code'].nunique()} địa bàn · "
+              f"{out['ds'].min()} → {out['ds'].max()}")
         frames.append(out[["area_code", "area_name", "ds", "price_m2", "source"]])
 
     for name in skipped:
         print(f"  ✗ {name}: không có cột thời gian dùng được")
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    if not frames:
+        return pd.DataFrame()
+
+    allf = pd.concat(frames, ignore_index=True)
+    n0 = len(allf)
+    allf = allf.drop_duplicates(subset=["area_code", "ds"], keep="first")
+    if n0 != len(allf):
+        print(f"  ({n0 - len(allf):,} điểm trùng giữa các phiên bản, giữ bản đầy đủ hơn)")
+    return allf
 
 
 # ══════════════════════════════════════════════════════════════════════

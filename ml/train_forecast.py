@@ -85,16 +85,24 @@ def fit_naive(train: pd.DataFrame, h: int) -> np.ndarray:
 
 def fit_prophet(train: pd.DataFrame, h: int, freq: str,
                 return_model: bool = False):
-    """Prophet với cấu hình dành cho chuỗi NGẮN.
+    """Prophet, cấu hình TỰ ĐIỀU CHỈNH theo độ dài chuỗi.
 
-    Tắt mùa vụ năm và tuần: chuỗi vài chục điểm không đủ để ước lượng chu kỳ
-    năm, bật lên chỉ khiến mô hình khớp nhiễu và tự tin sai. changepoint_prior
-    hạ xuống 0.05 → xu hướng ít gãy, tránh ngoại suy dốc đứng từ vài điểm cuối.
+    Mùa vụ năm chỉ được bật khi chuỗi trải ít nhất 2 năm. Đây không phải tuỳ
+    chọn thẩm mỹ: ước lượng một chu kỳ 12 tháng từ dưới 2 chu kỳ quan sát là
+    khớp nhiễu, và Prophet sẽ ngoại suy rất tự tin một mùa vụ không tồn tại.
+    Chuỗi giá căn hộ TP.HCM có 5,5 năm nên bật được; chuỗi tự tích lũy từ
+    crawler mới vài tuần thì không.
+
+    changepoint_prior_scale giữ 0.05 — xu hướng ít gãy, tránh ngoại suy dốc
+    đứng từ vài điểm cuối.
     """
     from prophet import Prophet
 
+    span_days = (train["ds"].max() - train["ds"].min()).days
+    yearly = span_days >= 730
+
     m = Prophet(
-        yearly_seasonality=False,
+        yearly_seasonality=yearly,
         weekly_seasonality=False,
         daily_seasonality=False,
         changepoint_prior_scale=0.05,
@@ -180,19 +188,37 @@ MODELS = {
 # Backtest cuốn chiếu
 # ══════════════════════════════════════════════════════════════════════
 def rolling_backtest(series: pd.DataFrame, horizon: int, freq: str,
-                     min_train: int = MIN_TRAIN) -> pd.DataFrame:
+                     min_train: int | None = None,
+                     max_folds: int = 24) -> pd.DataFrame:
     """Cắt tại nhiều mốc liên tiếp, mỗi lần huấn luyện lại từ đầu.
 
     Cửa sổ MỞ RỘNG (expanding) chứ không trượt: dữ liệu bất động sản ít, vứt
     bỏ phần đầu chuỗi để giữ cửa sổ cố định là lãng phí thông tin hiếm.
+
+    GIỚI HẠN SỐ FOLD là bắt buộc, không phải tối ưu vặt. Cắt tại MỌI mốc trên
+    chuỗi 1.996 điểm là gần 2.000 lần huấn luyện lại — nhân với Prophet (fit
+    Stan) và LSTM (300 epoch) thì mất nhiều giờ, để đổi lấy các fold gần như
+    trùng nhau vì chỉ lệch một quan sát. Lấy mẫu đều tay trên toàn dải cho
+    cùng thông tin với chi phí hữu hạn.
+
+    min_train mặc định tỷ lệ theo chuỗi chứ không cố định: Prophet có mùa vụ
+    năm cần ít nhất hai chu kỳ, mà một hằng số 8 điểm thì fold đầu tiên sẽ
+    huấn luyện trên 8 tháng và cho kết quả vô nghĩa.
     """
     rows = []
     n = len(series)
-    cuts = range(min_train, n - horizon + 1)
-    if not len(cuts):
+    if min_train is None:
+        min_train = max(MIN_TRAIN, 2 * horizon, int(0.30 * n))
+
+    all_cuts = list(range(min_train, n - horizon + 1))
+    if not all_cuts:
         raise SystemExit(
             f"Chuỗi {n} điểm quá ngắn cho backtest "
             f"(cần ≥ {min_train + horizon}). Thu thập thêm dữ liệu.")
+    step = max(1, len(all_cuts) // max_folds)
+    cuts = all_cuts[::step][:max_folds]
+    print(f"  {len(cuts)} fold · huấn luyện tối thiểu {min_train} kỳ · "
+          f"bước {step}")
 
     for cut in cuts:
         train = series.iloc[:cut]
@@ -239,19 +265,73 @@ def plot_forecast(series: pd.DataFrame, forecasts: dict[str, pd.DataFrame],
     print(f"  → {path}")
 
 
+def run_all(engine, horizon: int, max_folds: int) -> int:
+    """Chạy backtest trên MỌI chuỗi đủ dài, rồi tổng hợp.
+
+    Một quận có thể ra kết quả bất thường do ngẫu nhiên. Chín quận cho biết
+    quy luật có thật hay không — và câu "naive thắng ở 8/9 địa bàn" mạnh hơn
+    nhiều so với "naive thắng ở Quận 1".
+    """
+    hist = pd.read_sql(
+        "SELECT area_code, area_name, ds, price_m2 FROM gold_price_history "
+        "ORDER BY area_code, ds", engine)
+    lens = hist.groupby(["area_code", "area_name"]).size()
+    areas = [(c, n) for (c, n), k in lens.items() if k >= MIN_POINTS]
+
+    print(f"Chạy backtest trên {len(areas)} chuỗi · horizon={horizon}\n")
+    rows = []
+    for code, name in areas:
+        ser = (hist[hist["area_code"] == code]
+               .groupby("ds", as_index=False)["price_m2"].median()
+               .rename(columns={"price_m2": "y"}).sort_values("ds"))
+        ser["ds"] = pd.to_datetime(ser["ds"])
+        if ser["ds"].diff().dt.days.median() <= 2 and len(ser) > 200:
+            ser = (ser.set_index("ds")["y"].resample("MS").median()
+                      .dropna().reset_index())
+        if len(ser) < MIN_POINTS:
+            continue
+        bt = rolling_backtest(ser, horizon, "MS", max_folds=max_folds)
+        agg = bt.groupby("model")["mape"].mean()
+        best = agg.idxmin()
+        rows.append({"area_code": code, "area_name": name, "n": len(ser),
+                     "best": best, **{f"mape_{m}": v for m, v in agg.items()}})
+        print(f"  {name[:30]:32} tốt nhất: {best:8} "
+              + "  ".join(f"{m}={v:5.2f}%" for m, v in agg.items()))
+
+    res = pd.DataFrame(rows)
+    print("\n" + "═" * 70)
+    win = res["best"].value_counts()
+    print("Mô hình tốt nhất, đếm theo địa bàn:")
+    for m, k in win.items():
+        print(f"  {m:10} {k}/{len(res)} địa bàn")
+    cols = [c for c in res.columns if c.startswith("mape_")]
+    print("\nMAPE trung bình trên toàn bộ địa bàn:")
+    for c in sorted(cols, key=lambda c: res[c].mean()):
+        print(f"  {c[5:]:10} {res[c].mean():6.2f}%  (±{res[c].std():.2f})")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--all", action="store_true",
+                    help="chạy trên mọi chuỗi đủ dài rồi tổng hợp")
     ap.add_argument("--area", default=None,
                     help="area_code cần dự báo; mặc định lấy chuỗi dài nhất")
     ap.add_argument("--horizon", type=int, default=4, help="số kỳ dự báo")
     ap.add_argument("--freq", default=None, choices=[None, "D", "W", "MS"],
                     help="tần suất chuỗi; mặc định suy từ dữ liệu")
+    ap.add_argument("--resample", default="auto", choices=["auto", "D", "W", "M"],
+                    help="gộp chuỗi trước khi mô hình hóa (auto: ngày → tháng)")
+    ap.add_argument("--max-folds", type=int, default=24)
     ap.add_argument("--no-mlflow", action="store_true")
     ap.add_argument("--no-postgres", action="store_true")
     args = ap.parse_args()
 
     eng = pg_engine()
+    if args.all:
+        return run_all(eng, args.horizon, args.max_folds)
+
     hist = pd.read_sql(
         "SELECT area_code, area_name, ds, price_m2, source FROM gold_price_history "
         "ORDER BY area_code, ds", eng)
@@ -276,6 +356,22 @@ def main() -> int:
     series["ds"] = pd.to_datetime(series["ds"])
     area_name = hist.loc[hist["area_code"] == sel, "area_name"].iloc[0]
 
+    # ── Gộp chuỗi ngày thành tháng ────────────────────────────────
+    # Câu hỏi của đồ án là XU HƯỚNG THỊ TRƯỜNG, và ở tần suất ngày thì phần
+    # lớn biến động là nhiễu đo chứ không phải tín hiệu — giá bất động sản
+    # không đổi theo ngày. Gộp về tháng bằng TRUNG VỊ (nhất quán với cold
+    # path) vừa lọc nhiễu, vừa đưa 1.996 điểm về 66 điểm đủ để Prophet ước
+    # lượng mùa vụ năm trên 5,5 chu kỳ quan sát.
+    gap_days = series["ds"].diff().dt.days.median()
+    do_month = (args.resample == "M"
+                or (args.resample == "auto" and gap_days <= 2 and len(series) > 200))
+    if do_month:
+        n_before = len(series)
+        series = (series.set_index("ds")["y"].resample("MS").median()
+                        .dropna().reset_index())
+        print(f"Gộp theo THÁNG (trung vị): {n_before:,} điểm ngày → "
+              f"{len(series)} điểm tháng")
+
     # Suy tần suất từ khoảng cách điển hình giữa hai điểm liên tiếp
     if args.freq:
         freq = args.freq
@@ -298,7 +394,7 @@ def main() -> int:
 
     # ── Backtest ──────────────────────────────────────────────────────
     print(f"\nBacktest cuốn chiếu · horizon={args.horizon} kỳ")
-    bt = rolling_backtest(series, args.horizon, freq)
+    bt = rolling_backtest(series, args.horizon, freq, max_folds=args.max_folds)
     summary = (bt.groupby("model")[["mape", "rmse", "mae"]]
                  .agg(["mean", "std"]).round(3))
     n_folds = bt.groupby("model").size()
@@ -319,15 +415,26 @@ def main() -> int:
     beats_naive = best != "naive"
 
     print("")
+    span_years = (series["ds"].max() - series["ds"].min()).days / 365.25
     if beats_naive:
         print(f"✓ {best} thắng naive: {best_mape:.2f}% so với {naive_mape:.2f}% "
               f"(cải thiện {naive_mape - best_mape:.2f} điểm).")
     else:
         print(f"✗ KHÔNG mô hình nào thắng naive ({naive_mape:.2f}%).")
-        print("  Kết luận cho báo cáo: chuỗi quá ngắn và quá gần bước ngẫu nhiên")
-        print("  để Prophet/LSTM có chỗ phát huy. Đây là kết quả hợp lệ, không")
-        print("  phải lỗi cài đặt — và trung thực hơn nhiều so với việc chỉnh tham")
-        print("  số tới khi ra được con số đẹp trên một chuỗi vài chục điểm.")
+        # Chẩn đoán phải khớp với dữ liệu THẬT, không phải một câu có sẵn.
+        # Bản trước luôn in "chuỗi quá ngắn" — đúng khi chuỗi tự tích lũy mới
+        # vài tuần, nhưng sai hoàn toàn với chuỗi 5,5 năm.
+        if len(series) < 30 or span_years < 2:
+            print(f"  Nguyên nhân: chuỗi chỉ {len(series)} điểm / {span_years:.1f} năm")
+            print("  — quá ngắn để mô hình phức tạp có chỗ phát huy.")
+        else:
+            print(f"  Chuỗi KHÔNG ngắn ({len(series)} điểm, {span_years:.1f} năm), nên")
+            print("  đây là kết luận về BẢN CHẤT chuỗi chứ không phải về lượng dữ liệu:")
+            print("  giá bất động sản rất gần bước ngẫu nhiên có trôi. Với bước ngẫu")
+            print("  nhiên, dự báo tối ưu CHÍNH LÀ giá trị cuối — đúng cái naive làm.")
+            print("  Prophet và LSTM cùng mắc một lỗi: ngoại suy đà tăng gần nhất ra")
+            print(f"  {best_mape - naive_mape:.1f} điểm xa hơn mức thị trường thực sự đi.")
+        print("  Đây là kết quả khoa học hợp lệ, không phải lỗi cài đặt.")
 
     # ── Huấn luyện lại trên toàn chuỗi và dự báo về phía trước ─────────
     print(f"\nDự báo {args.horizon} kỳ tới (huấn luyện trên toàn bộ chuỗi):")
