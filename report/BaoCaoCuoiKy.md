@@ -805,11 +805,17 @@ Nhóm từ chối cách này. Script dựng chuỗi chỉ nhận ba nguồn có 
 
 | Nguồn | Mô tả | Trạng thái |
 |---|---|---|
-| `crawler_accumulated` | `posted_at` — ngày đăng tin do site công bố | Đang tích lũy |
-| `kaggle_hcm` | Dataset chuỗi giá căn hộ TP.HCM theo tháng | Chưa tải được |
+| `crawler_accumulated` | `posted_at` — ngày đăng tin do site công bố | Đang tích lũy, 4 điểm |
+| `kaggle_hcm` | Bất kỳ CSV nào trong `data/raw` **thực sự** có cột ngày | Chưa có file nào đạt |
 | `bds_index` | Chỉ số giá công bố công khai, nhập tay có trích dẫn | Chưa nhập |
 
 Nếu không nguồn nào khả dụng, script **dừng và báo rõ thiếu gì**, chứ không tự chế dữ liệu.
+
+**Một sai lầm về quy trình đáng ghi lại.** Đề cương ban đầu của đồ án chỉ đích danh dataset Kaggle `hoandan/apartment-prices-in-the-city-ho-chi-minh-city` làm nguồn chuỗi thời gian chính, mô tả là "chuỗi giá trung bình/m² theo quận, có cột Date". Khẳng định đó **suy ra từ tên dataset**, chưa từng mở file kiểm chứng. Tải về mới biết bên trong chỉ có một file `chung cu chotot.csv`: 2.015 tin rao, 5 cột (`#`, `title`, `area`, `price_VND`, `location`) — **không có cột ngày nào**. Cột `Unnamed: 0` chỉ là số thứ tự dòng.
+
+Đây đúng loại lỗi mà cả đồ án đang chống lại, chỉ khác là nó xảy ra ở khâu lập kế hoạch chứ không phải khâu xử lý: **tin vào nhãn thay vì mở dữ liệu ra xem**. Nó cùng họ với lỗi ở mục 4.7.1 (bảng tra chỉ có tiếng Việt nên đặc trưng chết âm thầm) và với bảng cầu nối sai ở mục 3.5.4.
+
+Cách khắc phục không phải là sửa lại tên dataset trong tài liệu mà là **bỏ hẳn việc nhận diện theo tên**. Hàm `_looks_like_series()` trong `scripts/build_price_history.py` đọc 50 dòng đầu của mọi CSV trong `data/raw`, thử parse cột nghi là ngày, và chỉ chấp nhận khi trên 80% giá trị parse được thành ngày hợp lệ và có ít nhất 3 mốc phân biệt. Nhờ vậy người dùng tải dataset nào về cũng được — hệ thống tự nói file nào dùng được và file nào không, kèm lý do.
 
 ### 4.5.2. Thiết kế mô hình
 

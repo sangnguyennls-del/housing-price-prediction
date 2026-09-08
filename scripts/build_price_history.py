@@ -18,8 +18,11 @@ Vì vậy script chỉ nhận ba nguồn có mốc thời gian THẬT:
                        crawl đã cho một chuỗi thật. Đây là nguồn tự sinh ra
                        bởi kiến trúc streaming, và là bằng chứng cho giá trị
                        của nó.
-  kaggle_hcm           dataset chuỗi giá căn hộ TP.HCM theo tháng (nếu đã tải
-                       về data/raw). Có cột Date thật.
+  kaggle_hcm           BẤT KỲ file CSV nào trong data/raw thực sự có cột
+                       ngày parse được. Nhận diện theo NỘI DUNG, không theo
+                       tên file — xem _looks_like_series(). Tính tới hiện tại
+                       chưa file nào trong data/raw đạt: cả hai dataset Kaggle
+                       đã tải đều là ảnh chụp một thời điểm.
   bds_index            CSV nhập tay từ chỉ số giá công bố công khai. Chỉ nạp
                        khi file tồn tại; nội dung do người làm đồ án nhập và
                        trích dẫn nguồn, script không sinh ra số nào.
@@ -106,55 +109,87 @@ def from_crawler(engine, freq: str) -> pd.DataFrame:
 # ══════════════════════════════════════════════════════════════════════
 # Nguồn 2 — dataset chuỗi căn hộ TP.HCM trên Kaggle
 # ══════════════════════════════════════════════════════════════════════
-def _find_hcm_csv() -> Path | None:
-    for p in RAW.glob("*.csv"):
-        stem = p.stem.lower()
-        if "apartment" in stem and ("hcm" in stem or "ho chi minh" in stem or "price" in stem):
-            return p
+_DATE_KEYS = ("date", "thang", "month", "time", "period", "ngay", "quarter")
+_PRICE_KEYS = ("price", "gia", "value", "index")
+_AREA_KEYS = ("district", "quan", "area_name", "region", "location")
+
+
+def _pick(cols: dict[str, str], keys: tuple[str, ...]) -> str | None:
+    for k in keys:
+        for low, orig in cols.items():
+            if k in low:
+                return orig
     return None
 
 
-def from_kaggle_hcm() -> pd.DataFrame:
-    """Đọc dataset chuỗi giá căn hộ TP.HCM nếu có trong data/raw.
+def _looks_like_series(path: Path) -> tuple[str, str, str | None] | None:
+    """Mở file ra xem: đây CÓ PHẢI chuỗi thời gian không?
 
-    Tên cột của dataset cộng đồng không ổn định nên dò theo từ khóa thay vì
-    cố định — cùng cách làm với ingestion/schemas.py.
+    NHẬN DIỆN THEO NỘI DUNG, KHÔNG THEO TÊN — và đây là bài học phải trả giá
+    bằng một vòng làm việc thừa. Đề cương của đồ án ghi dataset Kaggle
+    "hoandan/apartment-prices-in-the-city-ho-chi-minh-city" là chuỗi thời gian
+    có cột Date, suy ra từ CÁI TÊN chứ không mở ra xem. Tải về mới biết bên
+    trong là "chung cu chotot.csv": 2.015 tin rao, 5 cột, không có ngày tháng
+    nào. Bản dò theo tên file trước đây cũng hỏng nốt vì file không chứa chữ
+    "apartment".
+
+    Đọc 50 dòng đầu rồi thử parse thành ngày thì đúng/sai do DỮ LIỆU quyết
+    định, không do cách đặt tên.
     """
-    path = _find_hcm_csv()
-    if path is None:
-        return pd.DataFrame()
-
-    df = pd.read_csv(path)
-    cols = {c.lower().strip(): c for c in df.columns}
-
-    def pick(*keys):
-        for k in keys:
-            for low, orig in cols.items():
-                if k in low:
-                    return orig
+    try:
+        head = pd.read_csv(path, nrows=50)
+    except Exception:                                       # noqa: BLE001
         return None
-
-    c_date = pick("date", "thang", "time", "period")
-    c_price = pick("price", "gia")
-    c_area = pick("district", "quan", "area_name", "region")
+    cols = {c.lower().strip(): c for c in head.columns}
+    c_date, c_price = _pick(cols, _DATE_KEYS), _pick(cols, _PRICE_KEYS)
     if not c_date or not c_price:
-        print(f"⚠️  {path.name}: không tìm thấy cột ngày/giá → bỏ qua")
-        return pd.DataFrame()
+        return None
+    # Tên cột nghe giống ngày vẫn chưa đủ — phải parse được thật. Cột
+    # "Unnamed: 0" chứa chữ "nam" và từng bị bắt nhầm đúng theo kiểu này.
+    parsed = pd.to_datetime(head[c_date], errors="coerce")
+    if parsed.notna().mean() < 0.8 or parsed.nunique() < 3:
+        return None
+    return c_date, c_price, _pick(cols, _AREA_KEYS)
 
-    out = pd.DataFrame({
-        "ds": pd.to_datetime(df[c_date], errors="coerce"),
-        "price_m2": pd.to_numeric(df[c_price], errors="coerce"),
-        "area_name": df[c_area].astype(str) if c_area else "TP. Hồ Chí Minh",
-    }).dropna()
-    if out.empty:
-        return out
 
-    out["area_code"] = "HCM_" + out["area_name"].str.replace(r"\W+", "", regex=True)
-    out["ds"] = out["ds"].dt.date
-    out["source"] = "kaggle_hcm"
-    print(f"  {path.name}: {len(out):,} điểm, "
-          f"{out['ds'].min()} → {out['ds'].max()}")
-    return out[["area_code", "area_name", "ds", "price_m2", "source"]]
+def from_kaggle_hcm() -> pd.DataFrame:
+    """Nạp MỌI CSV trong data/raw thực sự có chuỗi thời gian.
+
+    Không đòi tên file cụ thể: người dùng tải dataset nào về cũng được, hệ
+    thống tự nhận ra file nào dùng được và nói rõ file nào không.
+    """
+    frames, skipped = [], []
+    for path in sorted(RAW.glob("*.csv")):
+        if path.stem.lower().startswith("sample"):
+            continue
+        hit = _looks_like_series(path)
+        if hit is None:
+            skipped.append(path.name)
+            continue
+        c_date, c_price, c_area = hit
+
+        df = pd.read_csv(path)
+        out = pd.DataFrame({
+            "ds": pd.to_datetime(df[c_date], errors="coerce"),
+            "price_m2": pd.to_numeric(
+                df[c_price].astype(str).str.replace(r"[^\d.,-]", "", regex=True)
+                          .str.replace(",", ".", regex=False), errors="coerce"),
+            "area_name": (df[c_area].astype(str) if c_area else "TP. Hồ Chí Minh"),
+        }).dropna()
+        if out.empty:
+            skipped.append(path.name)
+            continue
+
+        out["area_code"] = "HCM_" + out["area_name"].str.replace(r"\W+", "", regex=True)
+        out["ds"] = out["ds"].dt.date
+        out["source"] = "kaggle_hcm"
+        print(f"  ✓ {path.name}: {len(out):,} điểm · "
+              f"{out['area_code'].nunique()} địa bàn · {out['ds'].min()} → {out['ds'].max()}")
+        frames.append(out[["area_code", "area_name", "ds", "price_m2", "source"]])
+
+    for name in skipped:
+        print(f"  ✗ {name}: không có cột thời gian dùng được")
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
 # ══════════════════════════════════════════════════════════════════════

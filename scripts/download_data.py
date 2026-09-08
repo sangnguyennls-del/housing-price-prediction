@@ -31,11 +31,31 @@ DATASETS = [
      ("hanoi",),
      "Bổ sung dữ liệu Hà Nội, tăng độ phủ địa bàn.",
      False),
+    # ĐÃ KIỂM CHỨNG BẰNG CÁCH MỞ FILE, không suy từ tên. Dataset này mang tên
+    # "Apartment prices in the city Ho Chi Minh City" nghe như chuỗi giá theo
+    # thời gian, nhưng bên trong chỉ có đúng một file "chung cu chotot.csv":
+    # 2.015 tin rao, 5 cột (#, title, area, price_VND, location), KHÔNG có cột
+    # ngày. Nó là ảnh chụp một thời điểm, không dùng được cho bài toán 3.
+    # Giữ lại trong danh sách với đúng token tên file để lần sau không ai
+    # tải lại rồi tưởng đã đủ.
     ("hoandan/apartment-prices-in-the-city-ho-chi-minh-city",
-     ("apartment",),
-     "Chuỗi THỜI GIAN giá trung bình/m² theo quận TP.HCM. Bắt buộc cho bài "
-     "toán 3 (Prophet/LSTM) — dataset tin rao không có cột thời gian.",
-     True),
+     ("chungcu", "chotot"),
+     "⚠️  TÊN GÂY HIỂU NHẦM — KHÔNG phải chuỗi thời gian. Bên trong là "
+     "chung cu chotot.csv: 2.015 tin rao căn hộ TP.HCM, không có cột ngày. "
+     "Không dùng được cho bài toán 3.",
+     False),
+]
+
+# Chỗ trống thật sự của đồ án: chưa có nguồn chuỗi thời gian nào được kiểm
+# chứng. Danh sách ứng viên để thử — CHƯA MỞ RA XEM nên chưa dám khẳng định.
+TIMESERIES_CANDIDATES = [
+    ("trnduythanhkhttt/housepricinghcm",
+     "Mô tả nói có cột Date, giá trung bình/m² theo quận 1-9 TP.HCM. "
+     "CHƯA kiểm chứng."),
+    ("Chỉ số giá BĐS công bố công khai (globalpropertyguide, batdongsan)",
+     "Nhập tay vào data/raw/bds_price_index.csv, có trích dẫn nguồn."),
+    ("Tự tích lũy từ crawler",
+     "posted_at của alonhadat — chạy nhiều phiên nhỏ theo lịch trong vài tuần."),
 ]
 
 
@@ -123,6 +143,15 @@ def main() -> int:
     print(f"\n{'✓ CÓ  ' if sample.exists() else '○ chưa'}  (dữ liệu giả lập kiểm thử)")
     print("        Sinh bằng: python scripts/make_sample_data.py")
     print("        ⚠️  Chỉ để kiểm thử pipeline — KHÔNG dùng cho kết quả báo cáo.")
+
+    print("\n" + "─" * 74)
+    print("BÀI TOÁN 3 — chưa có nguồn chuỗi thời gian nào được kiểm chứng.")
+    print("Ứng viên để thử:")
+    for slug, note in TIMESERIES_CANDIDATES:
+        print(f"  · {slug}")
+        print(f"    {note}")
+    print("Kiểm tra nhanh một file bất kỳ có dùng được không:")
+    print("  docker compose exec ml python scripts/build_price_history.py")
 
     if not missing:
         print("\n" + "═" * 74)
