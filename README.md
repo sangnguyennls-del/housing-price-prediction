@@ -223,6 +223,30 @@ thực tế vào đặc trưng vị trí.
 Đặc trưng quan trọng nhất: `district_price_level` (0,359) → `log_area` (0,174) →
 `floors` (0,094) → `district_x_legal` (0,083).
 
+### Đồ án có đủ dữ liệu chưa?
+
+Trả lời bằng đường cong học, không bằng cảm tính — huấn luyện lại trên các tập
+con, đo trên cùng một tập kiểm tra cố định:
+
+| Dữ liệu | Số dòng | MAPE | Lợi ích biên |
+|---|---|---|---|
+| 25% | 6.104 | 21,65% | |
+| 50% | 12.209 | 20,61% | −1,04 điểm / +6.105 dòng |
+| 75% | 18.314 | 19,70% | −0,91 điểm / +6.105 dòng |
+| 100% | 24.419 | **19,42%** | **−0,28 điểm / +6.105 dòng** |
+
+Cùng lượng dữ liệu thêm vào, lợi ích sụp từ 1,04 xuống 0,28 điểm. **Gấp đôi dữ
+liệu chỉ đổi lấy ~0,3–0,6 điểm MAPE.**
+
+Nút thắt không phải số dòng mà là **đặc trưng**: vị trí hiện chỉ là một con số
+cho cả quận, trong khi biên độ giá p90/p10 *trong cùng một quận* trung bình là
+**2,9 lần** (Quận 1: 3,8 lần). Hướng cải thiện đúng là thêm chiều không gian
+(toạ độ, khoảng cách tới trung tâm/metro), không phải crawl thêm.
+
+```bash
+docker compose exec ml python scripts/learning_curve.py
+```
+
 ### Năm kết quả phản trực giác, đều rút ra từ số đo
 
 Cả năm đáng đưa vào báo cáo — chúng cho thấy quy trình có kiểm chứng, không phải

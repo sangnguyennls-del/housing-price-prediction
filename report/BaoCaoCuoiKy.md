@@ -661,6 +661,38 @@ Ba kết luận:
 2. **Báo cáo một chỉ số duy nhất là không đủ.** Nếu chỉ báo cáo MAPE, việc thêm dữ liệu thật trông như cải thiện thuần túy. Nếu chỉ báo cáo RMSE, nó trông như thảm họa. Cả hai đều đúng, cho hai câu hỏi khác nhau.
 3. **Cách sửa nằm ở dữ liệu, không nằm ở mô hình.** Không siêu tham số nào bù được cho một khoảng giá vắng mặt trong tập huấn luyện.
 
+### 4.2.6. Đồ án có đủ dữ liệu chưa? — trả lời bằng đường cong học
+
+"30.524 tin rao có đủ không?" là câu hỏi không trả lời được nếu hỏi trống không. Đủ hay không phụ thuộc vào một câu hỏi cụ thể hơn: **nếu có gấp đôi dữ liệu thì MAPE giảm bao nhiêu?**
+
+Đường cong học trả lời trực tiếp. Huấn luyện lại XGBoost với siêu tham số **giữ cố định** trên 10%, 25%, 50%, 75% và 100% tập train, đo trên **cùng một tập kiểm tra không đổi**. Mã hóa vị trí được tính lại từ đầu ở từng mốc — dùng chung bảng mã hóa của toàn bộ train sẽ khiến mốc 10% hưởng lợi từ 90% còn lại và đường cong phẳng một cách giả tạo.
+
+| Dữ liệu huấn luyện | Số dòng | Số quận nhìn thấy | MAPE |
+|---|---|---|---|
+| 10% | 2.441 | 134 | 24,00% |
+| 25% | 6.104 | 162 | 21,65% |
+| 50% | 12.209 | 180 | 20,61% |
+| 75% | 18.314 | 196 | 19,70% |
+| **100%** | **24.419** | **208** | **19,42%** |
+
+Bảng trên đã cho thấy đà giảm, nhưng cách đọc thuyết phục nhất là nhìn **lợi ích biên trên cùng một lượng dữ liệu thêm vào**. Ba chặng cuối mỗi chặng thêm đúng 6.105 dòng:
+
+| Chặng | Dữ liệu thêm | MAPE giảm |
+|---|---|---|
+| 25% → 50% | +6.105 dòng | 1,04 điểm |
+| 50% → 75% | +6.105 dòng | 0,91 điểm |
+| 75% → 100% | +6.105 dòng | **0,28 điểm** |
+
+Cùng một lượng dữ liệu bổ sung, lợi ích sụp từ 1,04 xuống 0,28 điểm. Ngoại suy theo đà này, **gấp đôi dữ liệu chỉ đổi lấy khoảng 0,3–0,6 điểm MAPE**.
+
+**Kết luận, và nó quyết định hướng phát triển ở Chương 6:**
+
+1. **Số lượng dữ liệu KHÔNG còn là nút thắt** của bài toán dự đoán giá. Thu thập thêm tin rao *cùng loại* là công sức bỏ ra không tương xứng.
+2. **Nút thắt nằm ở ĐẶC TRƯNG.** Vị trí — đặc trưng mạnh nhất, chiếm 0,359 độ quan trọng — hiện chỉ là **một con số cho cả quận**. Nhưng đo trên dữ liệu thật, tỷ lệ p90/p10 của đơn giá *trong cùng một quận* trung bình là **2,9 lần** (Quận 1 lên tới 3,8 lần). Mô hình về mặt cấu trúc không thể giải thích phần biến thiên đó: mọi bất động sản trong Quận 1 đều nhận cùng một giá trị vị trí.
+3. Vì vậy hướng cải thiện đúng là **thêm chiều không gian** (toạ độ, khoảng cách tới trung tâm / metro / trường học), không phải thêm dòng. Đây là cơ sở định lượng cho đề xuất ở mục 6.3.
+
+Cần phân biệt kết luận này với mục 4.2.5. Ở đó, thêm 297 tin đã làm RMSE xấu đi 75% — nhưng vì chúng mở rộng **dải giá**, chứ không phải vì chúng thêm số lượng. Hai mục trả lời hai câu khác nhau: *"thêm dòng cùng loại"* (mục này — vô ích) và *"thêm dòng khác phân khúc"* (4.2.5 — lộ ra giới hạn thật của tập dữ liệu).
+
 ## 4.3. Bài toán 2 — Heatmap giá
 
 Tầng Gold tổng hợp trung vị đơn giá, trung bình, tứ phân vị 25/75, trung vị diện tích và số tin theo ba cấp hành chính. Dashboard vẽ choropleth bằng Leaflet, ghép GeoJSON với dữ liệu giá **bằng mã hành chính**, không bằng tên.
@@ -1039,6 +1071,7 @@ Danh mục ảnh cần chèn vào báo cáo bản Word:
 | 5.11 | Chọn số cụm (Elbow + Silhouette) | `report/figures/cluster_selection.png` |
 | 5.12 | Phân cụm trên không gian PCA | `report/figures/cluster_scatter.png` |
 | 5.13 | Phân bố điểm bất thường | `report/figures/anomaly_detection.png` |
+| 5.14 | Đường cong học | `report/figures/learning_curve.png` |
 
 <!-- PAGEBREAK -->
 
@@ -1076,7 +1109,7 @@ Danh mục ảnh cần chèn vào báo cáo bản Word:
 
 **(5) Mất độ phân giải tại Thủ Đức.** Hệ quả của việc gộp Quận 2 và Quận 9 — thực tế hành chính, không phải lỗi xử lý.
 
-**(6) Độ phủ dữ liệu không đều.** 213 quận/huyện có dữ liệu nhưng chỉ 86 quận đủ 30 tin để lên bản đồ và tham gia phân cụm. Các tỉnh xa gần như không có mẫu.
+**(6) Độ phủ dữ liệu không đều — nhưng tổng lượng thì đủ.** 213 quận/huyện có dữ liệu, chỉ 86 quận đủ 30 tin để lên bản đồ và tham gia phân cụm; cấp phường chỉ 287/943 đơn vị đạt ngưỡng. Đây là vấn đề **phân bố**, không phải vấn đề khối lượng: đường cong học (mục 4.2.6) chứng minh tổng số dòng đã tới ngưỡng bão hoà.
 
 **(7) Chưa triển khai lên môi trường phân tán thật.** Toàn bộ chạy trên một máy; các vấn đề của cụm thật (network partition, skew dữ liệu giữa node) chưa gặp phải.
 
@@ -1090,7 +1123,7 @@ Danh mục ảnh cần chèn vào báo cáo bản Word:
 
 **Trung hạn — làm giàu đặc trưng:**
 
-- **Đặc trưng không gian:** khoảng cách tới trung tâm, tới trường học, bệnh viện, ga metro. Đây nhiều khả năng là hướng cải thiện MAPE mạnh nhất, vì hiện tại vị trí chỉ được biểu diễn bằng **một** số (trung vị giá quận) trong khi thực tế giá biến thiên rất mạnh ngay trong một quận.
+- **Đặc trưng không gian:** khoảng cách tới trung tâm, tới trường học, bệnh viện, ga metro. Đây là hướng cải thiện MAPE mạnh nhất, và khẳng định này **có cơ sở định lượng** chứ không phải phỏng đoán: đường cong học ở mục 4.2.6 cho thấy gấp đôi số dòng chỉ đổi lấy 0,3–0,6 điểm MAPE, trong khi biên độ giá *trong cùng một quận* là 2,9 lần mà đặc trưng vị trí hiện tại không nắm bắt được chút nào.
 - **Yếu tố vĩ mô:** lãi suất vay mua nhà, chỉ số giá vật liệu xây dựng.
 - **Ảnh vệ tinh:** mật độ xây dựng, tỷ lệ cây xanh quanh vị trí.
 

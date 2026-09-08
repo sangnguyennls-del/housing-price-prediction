@@ -32,7 +32,8 @@ FIGURES = [
     ("cluster_selection.png", "Hình 5.11. Chọn số cụm — Elbow và Silhouette"),
     ("cluster_scatter.png", "Hình 5.12. Phân cụm khu vực trên không gian PCA"),
     ("anomaly_detection.png", "Hình 5.13. Phân bố điểm bất thường"),
-    ("forecast.png", "Hình 5.14. Chuỗi giá và dự báo"),
+    ("learning_curve.png", "Hình 5.14. Đường cong học — thêm dữ liệu còn giúp được bao nhiêu"),
+    ("forecast.png", "Hình 5.15. Chuỗi giá và dự báo"),
 ]
 
 INLINE = re.compile(r"(\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*)")
