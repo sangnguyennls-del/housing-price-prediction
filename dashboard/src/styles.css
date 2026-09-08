@@ -1,0 +1,101 @@
+:root {
+  --bg: #f5f6f8;
+  --card: #fff;
+  --line: #e2e5ea;
+  --ink: #1c2330;
+  --muted: #6b7280;
+  --accent: #b3123c;
+  --up: #c62828;
+  --down: #1565c0;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.5 "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+}
+
+.app { max-width: 1400px; margin: 0 auto; padding: 16px 20px 40px; }
+
+header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 14px; }
+header h1 { margin: 0; font-size: 22px; letter-spacing: -0.2px; }
+header .sub { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
+
+/* ── KPI ─────────────────────────────────────────────── */
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.kpi { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+.kpi-val { font-size: 22px; font-weight: 650; letter-spacing: -0.5px; }
+.kpi-lbl { font-size: 12.5px; color: var(--ink); margin-top: 2px; }
+.kpi-unit { font-size: 11.5px; color: var(--muted); }
+.kpi.live { border-left: 3px solid #2e7d32; }
+.kpi.off { border-left: 3px solid #bdbdbd; }
+
+/* ── Tabs ────────────────────────────────────────────── */
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 16px 0 12px; }
+.tabs button {
+  background: var(--card); border: 1px solid var(--line); border-radius: 7px;
+  padding: 7px 13px; cursor: pointer; font-size: 13.5px; color: var(--ink);
+  display: flex; flex-direction: column; align-items: flex-start; line-height: 1.25;
+}
+.tabs button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+.tabs .hint { font-size: 10.5px; opacity: .6; }
+
+/* ── Card / layout ───────────────────────────────────── */
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 9px; padding: 14px 16px; }
+.card h3 { margin: 0 0 10px; font-size: 15px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+.scroll { max-height: 620px; overflow: auto; }
+@media (max-width: 1080px) { .grid2 { grid-template-columns: 1fr; } }
+
+/* ── Map ─────────────────────────────────────────────── */
+.map-wrap { background: var(--card); border: 1px solid var(--line); border-radius: 9px; padding: 12px; }
+.map { height: 620px; border-radius: 7px; }
+.map-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+.map-foot { margin-top: 8px; font-size: 12.5px; color: var(--muted); }
+.map-foot .hover { color: var(--ink); }
+.seg { display: flex; gap: 4px; }
+.seg button { background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 5px 11px; cursor: pointer; font-size: 13px; }
+.seg button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+.legend { display: flex; align-items: center; gap: 2px; font-size: 11px; }
+.legend-label { color: var(--muted); margin-right: 6px; font-size: 12px; }
+.legend-box { padding: 3px 7px; color: #333; border: 1px solid rgba(0,0,0,.08); }
+
+/* ── Form ────────────────────────────────────────────── */
+form label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 9px; }
+form input, form select {
+  display: block; width: 100%; margin-top: 3px; padding: 7px 9px;
+  border: 1px solid var(--line); border-radius: 6px; font-size: 13.5px; color: var(--ink);
+}
+form .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+form button {
+  background: var(--accent); color: #fff; border: 0; border-radius: 7px;
+  padding: 9px 18px; font-size: 14px; cursor: pointer; margin-top: 4px;
+}
+form button:disabled { opacity: .55; cursor: default; }
+
+/* ── Kết quả ─────────────────────────────────────────── */
+.bignum { font-size: 34px; font-weight: 680; letter-spacing: -1px; }
+.bignum small { font-size: 15px; font-weight: 400; color: var(--muted); }
+.kv { width: 100%; margin-top: 12px; border-collapse: collapse; }
+.kv td { padding: 6px 0; border-top: 1px solid var(--line); font-size: 13px; }
+.kv td:first-child { color: var(--muted); width: 45%; }
+.tag { background: #eef1f5; color: var(--muted); border-radius: 4px; padding: 1px 6px; margin-left: 6px; font-size: 11px; }
+
+/* ── Bảng ────────────────────────────────────────────── */
+.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+.tbl th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--card); }
+.tbl td { padding: 6px 8px; border-bottom: 1px solid #f0f2f5; }
+.tbl .r, th.r { text-align: right; }
+.pill { color: #fff; border-radius: 10px; padding: 1px 9px; font-size: 11.5px; }
+
+/* ── Trạng thái ──────────────────────────────────────── */
+.muted { color: var(--muted); font-size: 12.5px; }
+.note { color: var(--muted); font-size: 12px; margin: 10px 0 0; line-height: 1.55; }
+.err { color: #b3123c; background: #fdecef; border: 1px solid #f6c9d3; border-radius: 6px; padding: 8px 11px; font-size: 13px; margin-top: 8px; }
+.up { color: var(--up); }
+.down { color: var(--down); }
+
+footer { margin-top: 22px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); padding-top: 12px; }

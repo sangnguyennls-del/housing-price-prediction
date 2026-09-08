@@ -1,0 +1,52 @@
+# Data (không commit — tải lại bằng scripts/download_data.py)
+data/raw/*
+!data/raw/.gitkeep
+data/geo/*.geojson
+data/interim/
+data/processed/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# ML artifacts
+mlruns/
+mlartifacts/
+*.pkl
+*.joblib
+*.onnx
+
+# Docker volumes cục bộ
+volumes/
+
+# Java / Spring Boot
+api-gateway/target/
+*.class
+
+# Node
+dashboard/node_modules/
+dashboard/dist/
+
+# Môi trường
+.env
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# ── Sinh lại được, không cần theo dõi ────────────────────────────
+# LƯU Ý: .gitignore KHÔNG hỗ trợ chú thích cuối dòng — "path/  # ghi chú" bị
+# hiểu là một pattern chứa cả dấu # và khoảng trắng, tức không khớp gì cả.
+# Chú thích phải nằm trên dòng riêng.
+
+# cache tải về của scripts/fetch_geojson.py (~30MB, 63 file)
+data/geo/dvhcvn/
+# bản sao GeoJSON lúc build dashboard
+dashboard/public/geo/
+# sinh lại được bằng scripts/build_report.py
+report/*.docx

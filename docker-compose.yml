@@ -1,0 +1,326 @@
+# Hạ tầng Big Data cho đồ án IE221 — dự đoán giá bất động sản Việt Nam
+#
+#   docker compose up -d                     → chỉ hạ tầng (Kafka/Spark/HDFS/PG/Redis/MinIO/MLflow)
+#   docker compose --profile apps up -d      → thêm FastAPI + Spring Boot + React
+#
+# Cụm được thiết kế cho máy >= 16GB RAM. Xem README để biết cách giảm tải.
+
+name: realestate-bigdata
+
+x-hadoop-env: &hadoop-env
+  env_file:
+    - ./hadoop/config
+
+services:
+
+  # ══════════════════════════════════════════════════════════════
+  # INGESTION LAYER — Kafka
+  # ══════════════════════════════════════════════════════════════
+  redpanda:
+    image: redpandadata/redpanda:v24.3.1
+    container_name: redpanda
+    command:
+      - redpanda start
+      - --smp 1
+      - --memory 1G
+      - --overprovisioned
+      - --node-id 0
+      - --check=false
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+    ports:
+      - "19092:19092"   # Kafka API cho host
+      - "9644:9644"     # Admin API
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q Healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  redpanda-console:
+    image: redpandadata/console:v2.8.1
+    container_name: redpanda-console
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+    ports:
+      - "8080:8080"     # UI để chụp ảnh topic đưa vào báo cáo Chương 5
+
+  # ══════════════════════════════════════════════════════════════
+  # STORAGE LAYER — HDFS Data Lake (Bronze / Silver / Gold)
+  # ══════════════════════════════════════════════════════════════
+  namenode:
+    image: apache/hadoop:3.4.1
+    container_name: namenode
+    hostname: namenode
+    command: ["hdfs", "namenode"]
+    # Ảnh chạy bằng uid 1000 (hadoop) nhưng Docker tạo volume thuộc root, nên
+    # namenode không ghi được vào /hadoop/dfs. Cụm học thuật cục bộ nên chạy
+    # root là chấp nhận được; production sẽ chown volume trong init container.
+    user: root
+    <<: *hadoop-env
+    environment:
+      ENSURE_NAMENODE_DIR: /hadoop/dfs/name
+    ports:
+      - "9870:9870"     # Web UI — ảnh chụp 3 layer cho báo cáo
+      - "8020:8020"     # RPC
+    volumes:
+      # Mount ở /hadoop/dfs chứ KHÔNG phải /hadoop/dfs/name: entrypoint chỉ chạy
+      # `hdfs namenode -format` khi ENSURE_NAMENODE_DIR chưa tồn tại, mà volume
+      # mount thẳng vào đó sẽ tạo sẵn thư mục rỗng → không bao giờ format → lỗi
+      # InconsistentFSStateException.
+      - hdfs-name:/hadoop/dfs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9870/ >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+
+  datanode:
+    image: apache/hadoop:3.4.1
+    container_name: datanode
+    hostname: datanode
+    command: ["hdfs", "datanode"]
+    user: root
+    <<: *hadoop-env
+    depends_on:
+      namenode:
+        condition: service_healthy
+    volumes:
+      - hdfs-data:/hadoop/dfs
+
+  # ══════════════════════════════════════════════════════════════
+  # PROCESSING LAYER — Spark standalone cluster
+  # ══════════════════════════════════════════════════════════════
+  spark-master:
+    build:
+      context: .
+      dockerfile: docker/spark.Dockerfile
+    image: realestate/spark:3.5.9
+    container_name: spark-master
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
+    environment:
+      SPARK_MASTER_WEBUI_PORT: "8081"
+      SPARK_NO_DAEMONIZE: "true"
+    env_file: [./.env]
+    ports:
+      - "7077:7077"
+      - "8081:8081"     # Master UI
+    volumes:
+      - ./spark:/app/spark:ro
+      - ./ingestion:/app/ingestion:ro
+      - ./data:/app/data
+    depends_on:
+      namenode:
+        condition: service_healthy
+
+  spark-worker-1: &spark-worker
+    # Khai báo build giống master: nếu không, compose coi đây là ảnh phải kéo
+    # từ registry và sẽ báo "pull access denied".
+    build:
+      context: .
+      dockerfile: docker/spark.Dockerfile
+    image: realestate/spark:3.5.9
+    container_name: spark-worker-1
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077"]
+    environment:
+      SPARK_WORKER_CORES: "4"
+      SPARK_WORKER_MEMORY: "6g"
+      SPARK_WORKER_WEBUI_PORT: "8082"
+      SPARK_NO_DAEMONIZE: "true"
+    env_file: [./.env]
+    ports: ["8082:8082"]
+    volumes:
+      - ./spark:/app/spark:ro
+      - ./ingestion:/app/ingestion:ro
+      - ./data:/app/data
+    depends_on: [spark-master]
+
+  # Worker thứ 2 để chứng minh xử lý song song (ảnh chụp Spark UI cho báo cáo)
+  spark-worker-2:
+    <<: *spark-worker
+    container_name: spark-worker-2
+    environment:
+      SPARK_WORKER_CORES: "4"
+      SPARK_WORKER_MEMORY: "6g"
+      SPARK_WORKER_WEBUI_PORT: "8083"
+      SPARK_NO_DAEMONIZE: "true"
+    ports: ["8083:8083"]
+
+  # ══════════════════════════════════════════════════════════════
+  # SERVING LAYER — PostgreSQL (gold) + Redis (speed view)
+  # ══════════════════════════════════════════════════════════════
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-realestate}
+      POSTGRES_USER: ${POSTGRES_USER:-reuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-repass}
+    ports: ["5432:5432"]
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./scripts/init_postgres.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-reuser} -d ${POSTGRES_DB:-realestate}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  # ══════════════════════════════════════════════════════════════
+  # MLOps — MinIO (chỉ làm artifact store) + MLflow
+  # ══════════════════════════════════════════════════════════════
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD && mc mb --ignore-existing local/$$MLFLOW_ARTIFACT_BUCKET && echo bucket-san-sang
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      MLFLOW_ARTIFACT_BUCKET: ${MLFLOW_ARTIFACT_BUCKET:-mlflow}
+    restart: "no"
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.19.0
+    container_name: mlflow
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    # backend store dùng chung PostgreSQL, artifact store dùng MinIO (S3)
+    entrypoint:
+      - /bin/sh
+      - -c
+      - pip install --no-cache-dir psycopg2-binary boto3 && mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri postgresql://${POSTGRES_USER:-reuser}:${POSTGRES_PASSWORD:-repass}@postgres:5432/${POSTGRES_DB:-realestate} --default-artifact-root s3://${MLFLOW_ARTIFACT_BUCKET:-mlflow}/
+    ports: ["5000:5000"]
+
+  # ══════════════════════════════════════════════════════════════
+  # ML runtime — dùng để chạy training (không phải service thường trú)
+  # ══════════════════════════════════════════════════════════════
+  ml:
+    build:
+      context: .
+      dockerfile: docker/ml.Dockerfile
+    image: realestate/ml:1.0
+    container_name: ml
+    env_file: [./.env]
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      # Không đệm stdout: crawler chạy 30+ phút, nếu Python đệm thì log chỉ hiện
+      # ra khi tiến trình kết thúc — một job dài thành hộp đen.
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./ml:/app/ml
+      - ./ingestion:/app/ingestion
+      - ./scripts:/app/scripts
+      - ./spark:/app/spark        # để tái dùng udf_address.py, không nhân bản code
+      - ./data:/app/data
+      - ./report:/app/report
+    working_dir: /app
+    # giữ container sống để: docker compose exec ml python ml/train_price.py
+    command: ["sleep", "infinity"]
+
+  # ══════════════════════════════════════════════════════════════
+  # APPLICATION LAYER — profile "apps"
+  # ══════════════════════════════════════════════════════════════
+  api-ml:
+    build:
+      context: .
+      dockerfile: api-ml/Dockerfile
+    image: realestate/api-ml:1.0
+    container_name: api-ml
+    profiles: ["apps"]
+    env_file: [./.env]
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    ports: ["8000:8000"]
+    volumes:
+      # Gắn ngoài thay vì chỉ COPY lúc build: huấn luyện lại sinh bảng mã hóa
+      # mới, chỉ cần restart api-ml là dùng được, không phải build lại ảnh.
+      - ./report:/app/report:ro
+    depends_on: [mlflow, postgres, redis]
+
+  api-gateway:
+    build:
+      context: ./api-gateway
+    image: realestate/api-gateway:1.0
+    container_name: api-gateway
+    profiles: ["apps"]
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-realestate}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-reuser}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-repass}
+      SPRING_DATA_REDIS_HOST: redis
+      APP_MLAPI_BASEURL: http://api-ml:8000
+    ports: ["8090:8090"]
+    depends_on: [postgres, redis, api-ml]
+
+  dashboard:
+    build:
+      # Context là thư mục gốc để lấy được data/geo/*.geojson
+      context: .
+      dockerfile: dashboard/Dockerfile
+    image: realestate/dashboard:1.0
+    container_name: dashboard
+    profiles: ["apps"]
+    ports: ["5173:5173"]
+    depends_on: [api-gateway]
+
+volumes:
+  redpanda-data:
+  hdfs-name:
+  hdfs-data:
+  pg-data:
+  minio-data:

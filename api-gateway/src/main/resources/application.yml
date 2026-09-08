@@ -1,0 +1,50 @@
+spring:
+  application:
+    name: realestate-gateway
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://postgres:5432/realestate}
+    username: ${SPRING_DATASOURCE_USERNAME:reuser}
+    password: ${SPRING_DATASOURCE_PASSWORD:repass}
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 5000
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:redis}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+      timeout: 2s
+  cache:
+    # PHẢI khai báo tường minh. Spring Boot dò cache provider theo thứ tự và
+    # Redis đứng TRƯỚC Caffeine; vì module này có spring-data-redis (để đọc
+    # speed view của hot path), auto-config sẽ chọn Redis làm cache manager và
+    # bỏ qua toàn bộ khối `caffeine` bên dưới — kể cả TTL. Hậu quả đo được:
+    # các key gold::* nằm trong Redis với TTL = -1, tức dashboard phục vụ dữ
+    # liệu Gold cũ VĨNH VIỄN sau mỗi lần chạy lại job Spark, mà không có lỗi nào.
+    # Chọn Caffeine: cache của gateway là chi tiết nội bộ, không nên trộn vào
+    # Redis vốn đã có vai trò rõ ràng là speed view của hot path.
+    type: caffeine
+    cache-names: gold
+    caffeine:
+      # Tầng Gold chỉ đổi khi job Spark chạy (mỗi 6 giờ), nên cache 60 giây là
+      # rất bảo thủ. Mục đích không phải giảm tải PostgreSQL mà là chặn việc
+      # dashboard gọi lặp cùng một truy vấn khi người dùng rê chuột trên bản đồ.
+      spec: maximumSize=200,expireAfterWrite=60s
+
+server:
+  port: 8090
+
+app:
+  mlapi:
+    # Hot path và mô hình nằm sau địa chỉ này; gateway là nơi DUY NHẤT biết nó.
+    baseUrl: ${APP_MLAPI_BASEURL:http://api-ml:8000}
+    timeoutMs: 8000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+logging:
+  level:
+    vn.uit.ie221: INFO
