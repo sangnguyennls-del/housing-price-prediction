@@ -1,6 +1,6 @@
 # Nền tảng Big Data phân tích và dự báo giá bất động sản Việt Nam
 
-Đồ án môn **IE221 – Công nghệ Dữ liệu lớn**, Trường Đại học Công nghệ Thông tin – ĐHQG TP.HCM.
+Đồ án môn **IE212 – Công nghệ Dữ liệu lớn**, Trường Đại học Công nghệ Thông tin – ĐHQG TP.HCM.
 
 Hệ thống thu thập, xử lý và phân tích tin rao bất động sản Việt Nam trên nền tảng
 Kafka + Spark + HDFS, tích hợp học máy để dự đoán giá, phân cụm khu vực, dự báo xu
